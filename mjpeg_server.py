@@ -52,6 +52,10 @@ import cv2
 import numpy as np
 from aiohttp import web
 
+# Some Windows Python builds don't expose socket.AF_UNIX even though the OS
+# has supported Unix sockets since Win10 17063 — the value is 1 everywhere.
+AF_UNIX = getattr(socket, "AF_UNIX", 1)
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -304,7 +308,7 @@ async def socket_reader(
     Reconnects automatically if camera_app.py is restarted.
     """
     while True:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock = socket.socket(AF_UNIX, socket.SOCK_STREAM)
         try:
             log.info("Connecting to Unix socket '%s' …", socket_path)
             await loop.run_in_executor(None, sock.connect, socket_path)

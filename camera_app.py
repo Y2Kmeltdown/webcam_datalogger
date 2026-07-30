@@ -29,6 +29,10 @@ from pathlib import Path
 
 import cv2
 
+# Some Windows Python builds don't expose socket.AF_UNIX even though the OS
+# has supported Unix sockets since Win10 17063 — the value is 1 everywhere.
+AF_UNIX = getattr(socket, "AF_UNIX", 1)
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -46,6 +50,7 @@ log = logging.getLogger("webcam")
 
 DEFAULT_CONFIG: dict = {
     "device": 0,                          # index or "/dev/videoX"
+    "backend": "auto",                    # auto/v4l2/dshow/msmf/any
     "resolution": {"width": 1920, "height": 1080},
     "framerate": 30,
     "fourcc": "MJPG",                     # B0278 is MJPG-only; USB2 needs it
@@ -99,6 +104,34 @@ def resolve_device(device) -> tuple:
     return device, str(device)
 
 
+BACKENDS = {
+    "v4l2": cv2.CAP_V4L2,
+    "dshow": cv2.CAP_DSHOW,
+    "msmf": cv2.CAP_MSMF,
+    "any": cv2.CAP_ANY,
+}
+
+
+def resolve_backend(name: str) -> int:
+    """
+    Map the config 'backend' to an OpenCV capture backend id.
+    "auto" picks per platform: V4L2 on Linux, DirectShow on Windows,
+    OpenCV's own choice anywhere else.
+    """
+    name = (name or "auto").lower()
+    if name == "auto":
+        if sys.platform.startswith("linux"):
+            return cv2.CAP_V4L2
+        if sys.platform == "win32":
+            return cv2.CAP_DSHOW
+        return cv2.CAP_ANY
+    if name not in BACKENDS:
+        raise ValueError(
+            f"Unknown backend '{name}' (choose auto/v4l2/dshow/msmf/any)."
+        )
+    return BACKENDS[name]
+
+
 # ---------------------------------------------------------------------------
 # Camera controls (v4l2-ctl)
 # ---------------------------------------------------------------------------
@@ -112,6 +145,11 @@ def apply_controls(dev_path: str, controls: dict):
     """
     active = {k: v for k, v in controls.items() if not k.startswith("_")}
     if not active:
+        return
+
+    if not sys.platform.startswith("linux"):
+        log.info("v4l2-ctl controls are Linux-only — skipping on this "
+                 "platform (%s).", sys.platform)
         return
 
     if not shutil.which("v4l2-ctl"):
@@ -167,7 +205,7 @@ class FrameSocketServer:
     def start(self):
         if Path(self.socket_path).exists():
             os.unlink(self.socket_path)
-        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server = socket.socket(AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(self.socket_path)
         self._server.listen(8)
         self._running = True
@@ -292,6 +330,11 @@ class SegmentingEncoder:
 
     # ------------------------------------------------------------------
     def _spawn(self):
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(
+                "ffmpeg not found on PATH — install ffmpeg "
+                "(Raspberry Pi OS: sudo apt install ffmpeg)."
+            )
         log.info("Starting encoder: %s", " ".join(self._cmd))
         self._proc = subprocess.Popen(self._cmd, stdin=subprocess.PIPE)
 
@@ -377,11 +420,16 @@ class WebcamRecorder:
             raise ValueError(f"fourcc must be exactly 4 characters, got '{fourcc}'.")
 
         dev_arg, dev_path = resolve_device(self.cfg["device"])
-        log.info("Opening %s (%dx%d @ %g fps, FOURCC %s) …", dev_path, w, h, fps, fourcc)
+        backend = resolve_backend(str(self.cfg.get("backend", "auto")))
+        log.info("Opening %s (%dx%d @ %g fps, FOURCC %s, backend %s) …",
+                 dev_path, w, h, fps, fourcc, self.cfg.get("backend", "auto"))
 
-        cap = cv2.VideoCapture(dev_arg, cv2.CAP_V4L2)
+        cap = cv2.VideoCapture(dev_arg, backend)
         if not cap.isOpened():
-            raise RuntimeError(f"Could not open camera '{dev_arg}' via V4L2.")
+            raise RuntimeError(
+                f"Could not open camera '{dev_arg}' "
+                f"(backend {self.cfg.get('backend', 'auto')})."
+            )
 
         # FOURCC first: many UVC drivers only expose high resolutions under MJPG
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
@@ -408,7 +456,38 @@ class WebcamRecorder:
                  self.width, self.height, self.fps, fourcc_str)
 
         self.cap = cap
+        self._calibrate_fps()
         apply_controls(dev_path, self.cfg["controls"])
+
+    # ------------------------------------------------------------------
+    def _calibrate_fps(self, warm_up: int = 5, sample: int = 30):
+        """
+        Measure the real delivery rate by timing `sample` frames. Some
+        backends (notably DirectShow on Windows) ignore CAP_PROP_FPS and
+        stream at the driver's default rate — if the encoder is told the
+        wrong rate, recorded video plays back time-stretched. Fall back to
+        the negotiated value if the measurement looks implausible.
+        """
+        for _ in range(warm_up):
+            self.cap.read()
+        start = time.monotonic()
+        grabbed = 0
+        while grabbed < sample:
+            ok, frame = self.cap.read()
+            if ok and frame is not None:
+                grabbed += 1
+        measured = sample / (time.monotonic() - start)
+
+        if not (1.0 <= measured <= 240.0):
+            log.warning("Implausible measured rate %.1f fps — keeping %g fps.",
+                        measured, self.fps)
+            return
+        if abs(measured - self.fps) / self.fps > 0.05:
+            log.warning("Camera delivers %.1f fps, not the requested %g — "
+                        "recording at the measured rate.", measured, self.fps)
+            self.fps = measured
+        else:
+            log.info("Measured capture rate: %.1f fps.", measured)
 
     # ------------------------------------------------------------------
     def run(self):

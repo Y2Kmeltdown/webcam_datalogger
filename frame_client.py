@@ -25,6 +25,10 @@ import time
 import cv2
 import numpy as np
 
+# Some Windows Python builds don't expose socket.AF_UNIX even though the OS
+# has supported Unix sockets since Win10 17063 — the value is 1 everywhere.
+AF_UNIX = getattr(socket, "AF_UNIX", 1)
+
 
 def recv_exactly(conn: socket.socket, n: int) -> bytes:
     """Read exactly n bytes from the socket, blocking until available."""
@@ -45,7 +49,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Connecting to {args.socket} …")
-    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn = socket.socket(AF_UNIX, socket.SOCK_STREAM)
     try:
         conn.connect(args.socket)
     except FileNotFoundError:

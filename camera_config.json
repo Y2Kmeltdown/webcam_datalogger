@@ -3,6 +3,9 @@
 
   "device": 0,
 
+  "_backend_comment": "OpenCV capture backend: auto (v4l2 on Linux, dshow on Windows), v4l2, dshow, msmf or any.",
+  "backend": "auto",
+
   "resolution": {
     "width": 1920,
     "height": 1080

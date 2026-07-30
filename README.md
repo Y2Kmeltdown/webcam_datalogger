@@ -56,11 +56,25 @@ pip install aiohttp numpy opencv-python
 ```
 webcam_datalogger/
 ├── camera_app.py        # Main application
+├── check_camera.py      # Quick "is the camera connected and streaming?" check
 ├── mjpeg_server.py      # MJPEG live-stream server (REST-tunable)
 ├── frame_client.py      # Example frame consumer (OpenCV display)
 ├── camera_config.json   # Startup configuration
 └── README.md
 ```
+
+---
+
+## First check: is the camera detected?
+
+```bash
+python check_camera.py
+```
+
+Lists `/dev/video*` nodes, dumps the supported formats and controls
+(via `v4l2-ctl`), opens the camera with OpenCV, and captures ~2 s of frames
+reporting the measured frame rate and mean brightness. Exit code 0 = OK.
+Handy overrides: `--device /dev/video1 --width 1280 --height 720 --fps 60`.
 
 ---
 
@@ -228,6 +242,17 @@ keyframe after each `--segment-duration` boundary. The camera and encoder
 never stop between segments, so no frames are lost at the roll. If ffmpeg
 crashes it is respawned automatically (a fresh segment starts); after 3 rapid
 failures, recording is disabled while the frame socket stays live.
+
+At startup the app **measures the real frame delivery rate** over ~30 frames
+and records at that rate — some backends (DirectShow on Windows in
+particular) ignore the requested framerate, and encoding at the wrong rate
+would time-stretch the video.
+
+The OpenCV capture backend is selectable via `backend` in the config:
+`auto` (default) uses V4L2 on Linux and DirectShow on Windows; `v4l2`,
+`dshow`, `msmf` and `any` are also accepted. Camera controls via `v4l2-ctl`
+and the Unix frame socket are Linux features — on Windows the controls step
+is skipped (drive exposure etc. with AMCap or OpenCV `CAP_PROP_*` instead).
 
 ---
 
