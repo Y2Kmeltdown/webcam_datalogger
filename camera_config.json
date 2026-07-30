@@ -1,0 +1,31 @@
+{
+  "_comment": "Webcam Recorder – startup configuration. All fields are optional; missing keys fall back to built-in defaults.",
+
+  "device": 0,
+
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+
+  "framerate": 30,
+
+  "_fourcc_comment": "Pixel format requested from the camera. The Arducam B0278 (IMX477) only supports MJPG. USB 2.0 effectively requires MJPG at 1080p and above (YUYV is too bandwidth-hungry).",
+  "fourcc": "MJPG",
+
+  "_encoder_comment": "ffmpeg output options placed between the raw input and the segment muxer. A keyframe interval (-g) of ~2x framerate is appended automatically if absent. Pi hardware-encode alternative: [\"-c:v\", \"h264_v4l2m2m\", \"-b:v\", \"8M\"].",
+  "encoder": {
+    "options": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+  },
+
+  "output_dir": "recordings",
+
+  "socket_path": "/tmp/webcam_frames.sock",
+
+  "controls": {
+    "_comment": "V4L2/UVC control names, applied in listed order via `v4l2-ctl -c name=value`. Full control set of the Arducam B0278 (IMX477 HQ camera): brightness(-64..64), contrast(0..64), saturation(0..128), hue(-40..40), white_balance_automatic(0/1), gamma(72..500), gain(0..100), power_line_frequency(0=disabled, 1=50Hz, 2=60Hz), white_balance_temperature(2800..6500, only when auto WB off), sharpness(0..6), backlight_compensation(0..2), auto_exposure(1=manual, 3=aperture priority), exposure_time_absolute(1..5000 in 0.1 ms units = 0.1..500 ms, only when auto_exposure=1 is set first), exposure_dynamic_framerate(0/1). Inspect on device with: v4l2-ctl -d /dev/video0 --list-ctrls",
+
+    "auto_exposure": 3,
+    "white_balance_automatic": true
+  }
+}

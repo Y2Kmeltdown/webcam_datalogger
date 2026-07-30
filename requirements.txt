@@ -1,0 +1,8 @@
+# Installed into this module's own virtual environment at install time —
+# see eventide-module.json and the eventide docs (docs/MODULES.md).
+#
+# ffmpeg and v4l2-ctl come from apt (declared in eventide-module.json), and
+# opencv-python-headless already includes the V4L2 capture backend.
+aiohttp
+numpy
+opencv-python-headless==4.13.0.92
