@@ -6,7 +6,7 @@
   "dependencies": {
     "apt": ["ffmpeg", "v4l-utils"]
   },
-  "recordings_subdir": "webcam",
+  "recordings_subdir": "picam",
   "arguments": [
     {
       "name": "device",

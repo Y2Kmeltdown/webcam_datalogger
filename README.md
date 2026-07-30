@@ -262,38 +262,42 @@ Two corrections fall out of that:
 
 By default the module encodes with **libx264 — pure software**. Hardware
 encoding only happens if you switch `encoder.options` to a hardware encoder.
-The RK3588 exposes its H.264/H.265 encoder as a V4L2 M2M device (look for
-`rockchip,rk3588-vepu121-enc` in `v4l2-ctl --list-devices`, e.g. `/dev/video4`).
 
-1. **Does your ffmpeg have a usable HW encoder?**
+**Important RK3588 caveat (verified on an Orange Pi 5 Ultra, mainline
+kernel):** the `rockchip,rk3588-vepu121-enc` V4L2 node enumerates **JPEG
+encode only** — the mainline hantro driver does not expose H.264/H.265
+encode through V4L2, so stock ffmpeg's `h264_v4l2m2m` fails with "Could not
+find a valid device" (GStreamer's `v4l2h264enc` fails the same way). The
+hardware H.264 encoder is only reachable via **Rockchip MPP**
+(`/dev/mpp_service`):
+
+1. **Is the MPP path available?**
    ```bash
-   ffmpeg -hide_banner -encoders | grep -iE 'h264|hevc'
+   ls -l /dev/mpp_service
+   apt list --installed 2>/dev/null | grep -iE 'mpp|rga'
    ```
-   `h264_v4l2m2m` = stock ffmpeg V4L2-M2M support; `h264_rkmpp` = a
-   Rockchip-MPP ffmpeg build (e.g. jellyfin-ffmpeg).
-2. **Does it actually initialise?**
+2. **Get an MPP-enabled ffmpeg** (jellyfin-ffmpeg arm64, or the
+   ubuntu-rockchip builds) — check for it with:
+   ```bash
+   ffmpeg -hide_banner -encoders | grep -iE 'rkmpp|v4l2m2m'
+   ```
+3. **Test it:**
    ```bash
    ffmpeg -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 10 \
-          -c:v h264_v4l2m2m -b:v 8M -y /tmp/hwtest.mp4
+          -c:v h264_rkmpp -b:v 8M -y /tmp/hwtest.mp4
    ```
-   "Could not find a valid device" / configure errors = not usable with this
-   kernel/ffmpeg combo; a clean run + valid MP4 = working.
-3. **Prove it at runtime** (while `camera_app.py` is recording):
-   ```bash
-   sudo lsof /dev/video4                              # ffmpeg holding the encoder node = HW
-   pidstat -p $(pgrep -x ffmpeg | head -1) 2          # or: top / htop
-   ```
-   CPU is the giveaway: libx264 at 1080p30 veryfast burns ~100–200 % CPU on
-   this SoC; a working HW encoder sits at ~5–20 %. (ffmpeg still converts
-   BGR24→NV12 in software — that small cost is normal.)
 4. **Enable it** in `camera_config.json` (drop the x264-only `-preset`/`-crf`;
    `-g` is still auto-appended):
    ```json
-   "encoder": { "options": ["-c:v", "h264_v4l2m2m", "-b:v", "8M"] }
+   "encoder": { "options": ["-c:v", "h264_rkmpp", "-b:v", "8M"] }
    ```
-   If `h264_v4l2m2m` won't initialise on your image, install an MPP-enabled
-   ffmpeg (`h264_rkmpp`) and use that name instead — the module shells out to
-   whatever `ffmpeg` is on PATH.
+5. **Prove it at runtime** (while `camera_app.py` is recording): CPU is the
+   giveaway — libx264 at 1080p30 veryfast burns ~100–200 % CPU on this SoC,
+   a working HW encoder sits at ~5–20 %. (`htop`, or
+   `pidstat -p $(pgrep -x ffmpeg | head -1) 2`.)
+
+If no MPP ffmpeg is to hand, libx264 at `framerate: 30` is perfectly
+serviceable on the RK3588's A76 cores — measure first, optimize if needed.
 
 The OpenCV capture backend is selectable via `backend` in the config:
 `auto` (default) uses V4L2 on Linux and DirectShow on Windows; `v4l2`,
