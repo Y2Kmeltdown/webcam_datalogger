@@ -1,7 +1,7 @@
 {
   "_comment": "Webcam Recorder – startup configuration. All fields are optional; missing keys fall back to built-in defaults.",
 
-  "device": 0,
+  "device": 6,
 
   "_backend_comment": "OpenCV capture backend: auto (v4l2 on Linux, dshow on Windows), v4l2, dshow, msmf or any.",
   "backend": "auto",
@@ -11,10 +11,14 @@
     "height": 1080
   },
 
-  "framerate": 30,
+  "_framerate_comment": "Target output rate. UVC cameras offer discrete rates per resolution (the B0278 does 1080p at 60 fps ONLY — see v4l2-ctl --list-formats-ext). If the camera can only stream faster than this target, frames are decimated (every Nth kept) so recordings and the socket run at ~this rate.",
+  "framerate": 60,
 
   "_fourcc_comment": "Pixel format requested from the camera. The Arducam B0278 (IMX477) only supports MJPG. USB 2.0 effectively requires MJPG at 1080p and above (YUYV is too bandwidth-hungry).",
   "fourcc": "MJPG",
+
+  "_buffer_size_comment": "Number of V4L2 capture buffers. 1 gives lowest latency but drops frames at high frame rates (the driver has no free buffer while OpenCV is decoding); 4 is a safe default.",
+  "buffer_size": 4,
 
   "_encoder_comment": "ffmpeg output options placed between the raw input and the segment muxer. A keyframe interval (-g) of ~2x framerate is appended automatically if absent. Pi hardware-encode alternative: [\"-c:v\", \"h264_v4l2m2m\", \"-b:v\", \"8M\"].",
   "encoder": {

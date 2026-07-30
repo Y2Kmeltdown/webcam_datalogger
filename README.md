@@ -110,11 +110,11 @@ python camera_app.py --verbose
 
 ### Live MJPEG stream
 ```bash
-python mjpeg_server.py --port 8087
-# Viewer page:   http://<host>:8087/
-# MJPEG stream:  http://<host>:8087/stream
-# Snapshot:      http://<host>:8087/snapshot
-# Settings API:  curl -X PUT http://<host>:8087/api/settings -d '{"quality":60}' -H 'Content-Type: application/json'
+python mjpeg_server.py --port 8082
+# Viewer page:   http://<host>:8082/
+# MJPEG stream:  http://<host>:8082/stream
+# Snapshot:      http://<host>:8082/snapshot
+# Settings API:  curl -X PUT http://<host>:8082/api/settings -d '{"quality":60}' -H 'Content-Type: application/json'
 ```
 
 ### Consuming frames from another process
@@ -150,7 +150,7 @@ Multiple clients can connect simultaneously; each receives every frame.
 {
   "device": 0,                      // camera index or "/dev/video0"
   "resolution": { "width": 1920, "height": 1080 },
-  "framerate": 30,
+  "framerate": 60,
   "fourcc": "MJPG",                 // B0278 is MJPG-only; USB2 needs it at 1080p+
   "encoder": {
     // ffmpeg output options between raw input and segment muxer;
@@ -187,8 +187,8 @@ before `exposure_time_absolute`). Inspect the actual control set of your
 camera with:
 
 ```bash
-v4l2-ctl -d /dev/video0 --list-ctrls          # all controls + ranges
-v4l2-ctl -d /dev/video0 --list-formats-ext    # supported resolutions/framerates
+v4l2-ctl -d /dev/video6 --list-ctrls          # all controls + ranges
+v4l2-ctl -d /dev/video6 --list-formats-ext    # supported resolutions/framerates
 ```
 
 ### Arducam B0278 + Pi HQ Camera (IMX477) — confirmed control set
