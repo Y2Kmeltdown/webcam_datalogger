@@ -52,8 +52,9 @@ DEFAULT_CONFIG: dict = {
     "device": 0,                          # index or "/dev/videoX"
     "backend": "auto",                    # auto/v4l2/dshow/msmf/any
     "resolution": {"width": 1920, "height": 1080},
-    "framerate": 30,
+    "framerate": 30,                      # target rate; see _plan_output_rate
     "fourcc": "MJPG",                     # B0278 is MJPG-only; USB2 needs it
+    "buffer_size": 4,                     # V4L2 buffers; 1 = lowest latency but drops frames
     "encoder": {
         # ffmpeg output options, inserted between the raw input and the
         # segment muxer. A keyframe interval (-g) of ~2 s is appended
@@ -409,6 +410,7 @@ class WebcamRecorder:
         self.width = 0
         self.height = 0
         self.fps = 0.0
+        self.emit_step = 1  # decimation factor, set by _plan_output_rate
 
     # ------------------------------------------------------------------
     def configure(self):
@@ -431,12 +433,15 @@ class WebcamRecorder:
                 f"(backend {self.cfg.get('backend', 'auto')})."
             )
 
-        # FOURCC first: many UVC drivers only expose high resolutions under MJPG
+        # Buffer count first: on some backends (DirectShow) setting it after
+        # the format silently renegotiates the format (e.g. drops MJPG).
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, int(self.cfg.get("buffer_size", 4)))
+        # FOURCC before resolution: many UVC drivers only expose high
+        # resolutions under MJPG
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
         cap.set(cv2.CAP_PROP_FPS, fps)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # minimize latency, drop stale frames
 
         self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -457,7 +462,31 @@ class WebcamRecorder:
 
         self.cap = cap
         self._calibrate_fps()
+        self._plan_output_rate()
         apply_controls(dev_path, self.cfg["controls"])
+
+    # ------------------------------------------------------------------
+    def _plan_output_rate(self):
+        """
+        UVC cameras offer discrete frame rates per resolution, and the
+        requested rate is often unavailable (e.g. the B0278 does 1080p at
+        60 fps only). When the camera must stream faster than the configured
+        target, decimate: forward every Nth frame so recordings and the
+        socket run at (close to) the target rate. self.fps becomes the
+        effective output rate used for the encoder's -r.
+        """
+        requested = float(self.cfg["framerate"])
+        if requested > 0 and self.fps > requested * 1.05:
+            self.emit_step = max(1, round(self.fps / requested))
+            self.fps = self.fps / self.emit_step
+            log.warning(
+                "Camera cannot stream %g fps at this resolution (delivers "
+                "%.1f) — keeping every %d. frame for an output rate of "
+                "%.1f fps.",
+                requested, self.fps * self.emit_step, self.emit_step, self.fps,
+            )
+        else:
+            self.emit_step = 1
 
     # ------------------------------------------------------------------
     def _calibrate_fps(self, warm_up: int = 5, sample: int = 30):
@@ -504,7 +533,8 @@ class WebcamRecorder:
         )
 
         failures = 0
-        frames = 0
+        grabbed = 0
+        emitted = 0
         stat_start = time.monotonic()
         try:
             while self._running:
@@ -522,6 +552,13 @@ class WebcamRecorder:
                     continue
                 failures = 0
 
+                # Decimation: always read() to keep the driver queue drained,
+                # but only forward every emit_step-th frame (see
+                # _plan_output_rate).
+                grabbed += 1
+                if grabbed % self.emit_step != 0:
+                    continue
+
                 # Timestamp recorded immediately after capture returns —
                 # closest approximation to when the host received the frame.
                 timestamp_us = int(time.time() * 1_000_000)
@@ -530,11 +567,11 @@ class WebcamRecorder:
                 self.socket_server.send_frame(data, timestamp_us)
                 encoder.write_frame(data)
 
-                frames += 1
+                emitted += 1
                 elapsed = time.monotonic() - stat_start
                 if elapsed >= 15.0:
-                    log.info("Capture rate: %.1f fps.", frames / elapsed)
-                    frames = 0
+                    log.info("Output rate: %.1f fps.", emitted / elapsed)
+                    emitted = 0
                     stat_start = time.monotonic()
         except KeyboardInterrupt:
             log.info("Keyboard interrupt — shutting down.")

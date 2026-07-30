@@ -149,9 +149,11 @@ Multiple clients can connect simultaneously; each receives every frame.
 ```jsonc
 {
   "device": 0,                      // camera index or "/dev/video0"
+  "backend": "auto",                // auto (v4l2 on Linux, dshow on Windows), v4l2, dshow, msmf, any
   "resolution": { "width": 1920, "height": 1080 },
-  "framerate": 60,
+  "framerate": 60,                  // target rate — decimated to if the camera only streams faster
   "fourcc": "MJPG",                 // B0278 is MJPG-only; USB2 needs it at 1080p+
+  "buffer_size": 4,                 // V4L2 capture buffers; 1 = lowest latency but drops frames
   "encoder": {
     // ffmpeg output options between raw input and segment muxer;
     // "-g <2×fps>" is appended automatically if absent.
@@ -243,10 +245,55 @@ never stop between segments, so no frames are lost at the roll. If ffmpeg
 crashes it is respawned automatically (a fresh segment starts); after 3 rapid
 failures, recording is disabled while the frame socket stays live.
 
-At startup the app **measures the real frame delivery rate** over ~30 frames
-and records at that rate — some backends (DirectShow on Windows in
-particular) ignore the requested framerate, and encoding at the wrong rate
-would time-stretch the video.
+At startup the app **measures the real frame delivery rate** over ~30 frames.
+Two corrections fall out of that:
+
+- **Time-stretch protection** — some backends (DirectShow on Windows in
+  particular) ignore the requested framerate; encoding at the wrong rate
+  would time-stretch the video, so the encoder runs at the measured rate.
+- **Decimation to the target rate** — UVC cameras offer discrete rates per
+  resolution, and the requested one often doesn't exist (the B0278 does
+  1080p at 60 fps *only*). If the camera can only stream faster than
+  `framerate`, every Nth frame is kept so recordings and the socket run at
+  the configured target (60 fps stream + `framerate: 30` → 30 fps output).
+  The driver queue is still drained every frame, so no lag builds up.
+
+## Verifying hardware encoding (Orange Pi 5 / RK3588)
+
+By default the module encodes with **libx264 — pure software**. Hardware
+encoding only happens if you switch `encoder.options` to a hardware encoder.
+The RK3588 exposes its H.264/H.265 encoder as a V4L2 M2M device (look for
+`rockchip,rk3588-vepu121-enc` in `v4l2-ctl --list-devices`, e.g. `/dev/video4`).
+
+1. **Does your ffmpeg have a usable HW encoder?**
+   ```bash
+   ffmpeg -hide_banner -encoders | grep -iE 'h264|hevc'
+   ```
+   `h264_v4l2m2m` = stock ffmpeg V4L2-M2M support; `h264_rkmpp` = a
+   Rockchip-MPP ffmpeg build (e.g. jellyfin-ffmpeg).
+2. **Does it actually initialise?**
+   ```bash
+   ffmpeg -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 10 \
+          -c:v h264_v4l2m2m -b:v 8M -y /tmp/hwtest.mp4
+   ```
+   "Could not find a valid device" / configure errors = not usable with this
+   kernel/ffmpeg combo; a clean run + valid MP4 = working.
+3. **Prove it at runtime** (while `camera_app.py` is recording):
+   ```bash
+   sudo lsof /dev/video4                              # ffmpeg holding the encoder node = HW
+   pidstat -p $(pgrep -x ffmpeg | head -1) 2          # or: top / htop
+   ```
+   CPU is the giveaway: libx264 at 1080p30 veryfast burns ~100–200 % CPU on
+   this SoC; a working HW encoder sits at ~5–20 %. (ffmpeg still converts
+   BGR24→NV12 in software — that small cost is normal.)
+4. **Enable it** in `camera_config.json` (drop the x264-only `-preset`/`-crf`;
+   `-g` is still auto-appended):
+   ```json
+   "encoder": { "options": ["-c:v", "h264_v4l2m2m", "-b:v", "8M"] }
+   ```
+   If `h264_v4l2m2m` won't initialise on your image, install an MPP-enabled
+   ffmpeg (`h264_rkmpp`) and use that name instead — the module shells out to
+   whatever `ffmpeg` is on PATH.
 
 The OpenCV capture backend is selectable via `backend` in the config:
 `auto` (default) uses V4L2 on Linux and DirectShow on Windows; `v4l2`,

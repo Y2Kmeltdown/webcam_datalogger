@@ -149,11 +149,11 @@ def main() -> int:
             print("       (e.g. 'Arducam IMX477 HQ Camera') and pass --device /dev/videoN.")
         return 1
 
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, int(cfg.get("buffer_size", 4)))
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     cap.set(cv2.CAP_PROP_FPS, fps)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     got_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     got_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -163,6 +163,10 @@ def main() -> int:
     print(f"Negotiated: {got_w}x{got_h} @ {got_fps:g} fps, FOURCC '{got_fourcc_str}'")
     if (got_w, got_h) != (width, height):
         print(f"[WARN] Camera did not honor the requested {width}x{height}.")
+    if abs(got_fps - fps) > 0.5:
+        print(f"[WARN] Requested {fps:g} fps but got {got_fps:g} — UVC cameras "
+              f"offer discrete rates per resolution (see format list above);")
+        print(f"       camera_app.py decimates to the configured target instead.")
     if got_fourcc_str.strip("\x00") != fourcc:
         print(f"[WARN] Requested FOURCC {fourcc} but got '{got_fourcc_str}'.")
 
