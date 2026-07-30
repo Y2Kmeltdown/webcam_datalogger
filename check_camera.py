@@ -24,11 +24,20 @@ Usage:
 """
 
 import argparse
+import getpass
 import glob
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
+
+try:
+    import grp
+    import pwd
+except ImportError:  # Windows has no grp/pwd — only used on Linux paths
+    grp = pwd = None
 
 import cv2
 import numpy as np
@@ -41,6 +50,29 @@ def _run(cmd: list[str]) -> str:
     return (res.stdout or res.stderr).strip()
 
 
+def permission_hint(dev_path: str):
+    """If dev_path exists but is not accessible, explain the group fix."""
+    if not sys.platform.startswith("linux") or not os.path.exists(dev_path):
+        return
+    if os.access(dev_path, os.R_OK | os.W_OK):
+        return
+    st = os.stat(dev_path)
+    try:
+        group = grp.getgrgid(st.st_gid).gr_name
+    except KeyError:
+        group = str(st.st_gid)
+    try:
+        owner = pwd.getpwuid(st.st_uid).pw_name
+    except KeyError:
+        owner = str(st.st_uid)
+    print(f"[HINT] {dev_path} is {owner}:{group} mode "
+          f"{stat.S_IMODE(st.st_mode):04o} — user '{getpass.getuser()}' "
+          f"has no read/write access.")
+    print(f"       Fix:  sudo usermod -aG {group} $USER   (then log out/in)")
+    print(f"       Or run this check with sudo. Eventide supervisor services")
+    print(f"       run as root and are not affected by this.")
+
+
 def show_device_info(dev_path: str):
     """Print V4L2 device formats and controls (Linux only, needs v4l2-ctl)."""
     if not sys.platform.startswith("linux"):
@@ -49,10 +81,16 @@ def show_device_info(dev_path: str):
     if not shutil.which("v4l2-ctl"):
         print("(v4l2-ctl not found — sudo apt install v4l-utils for device info)")
         return
+    print("--- Devices (v4l2-ctl --list-devices) ---")
+    print(_run(["v4l2-ctl", "--list-devices"]))
     print("--- Supported formats (v4l2-ctl --list-formats-ext) ---")
-    print(_run(["v4l2-ctl", "-d", dev_path, "--list-formats-ext"]))
+    out = _run(["v4l2-ctl", "-d", dev_path, "--list-formats-ext"])
+    print(out)
     print("--- Controls (v4l2-ctl --list-ctrls) ---")
-    print(_run(["v4l2-ctl", "-d", dev_path, "--list-ctrls"]))
+    out += "\n" + _run(["v4l2-ctl", "-d", dev_path, "--list-ctrls"])
+    print(out.split("\n", 1)[1])
+    if "Permission denied" in out:
+        permission_hint(dev_path)
 
 
 def main() -> int:
@@ -103,6 +141,12 @@ def main() -> int:
     cap = cv2.VideoCapture(dev_arg, resolve_backend(str(cfg.get("backend", "auto"))))
     if not cap.isOpened():
         print(f"[FAIL] Could not open camera '{dev_arg}'.")
+        permission_hint(dev_path)
+        if sys.platform.startswith("linux"):
+            print("       Also check the device list above: on boards with hardware")
+            print("       codec/ISP nodes (e.g. video-dec*/video-enc*), /dev/video0 is")
+            print("       often NOT the camera. Find the node named like your camera")
+            print("       (e.g. 'Arducam IMX477 HQ Camera') and pass --device /dev/videoN.")
         return 1
 
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
