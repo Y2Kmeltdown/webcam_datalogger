@@ -20,9 +20,9 @@
   "_buffer_size_comment": "Number of V4L2 capture buffers. 1 gives lowest latency but drops frames at high frame rates (the driver has no free buffer while OpenCV is decoding); 4 is a safe default.",
   "buffer_size": 4,
 
-  "_encoder_comment": "ffmpeg output options placed between the raw input and the segment muxer. A keyframe interval (-g) of ~2x framerate is appended automatically if absent. Pi hardware-encode alternative: [\"-c:v\", \"h264_v4l2m2m\", \"-b:v\", \"8M\"].",
+  "_encoder_comment": "ffmpeg output options placed between the raw input and the segment muxer. A keyframe interval (-g) of ~2x framerate is appended automatically if absent. Current setting uses RK3588 hardware encode (h264_rkmpp) — requires the Rockchip vendor kernel (/dev/mpp_service) and an rkmpp-enabled ffmpeg. Software fallback: [\"-c:v\", \"libx264\", \"-preset\", \"veryfast\", \"-crf\", \"23\"].",
   "encoder": {
-    "options": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    "options": ["-c:v", "h264_rkmpp", "-b:v", "8M"]
   },
 
   "output_dir": "recordings",
